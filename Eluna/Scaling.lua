@@ -1,3 +1,16 @@
+-- Shared code for scaling creature health/damage
+
+-- Apply a stack of the buff/debuff depending on the percentage of players 
+-- we are below the expected player count.
+-- Ex: Instance expects 10 players, but there's 6 players in the instance
+--     If perMissingApplyStack = 0.267 -> (1 - 6/10) / 0.267
+--                                        (0.4) / 0.267 = 1.498 (rounded down to 2)
+-- 0.267 means instances expecting 5 people would cap at 2 stacks, but
+-- allows for an extra stack if a small group runs a 10/20/40-man dungeon/raid.
+local perMissingApplyStack = 0.267
+local buff = 28419 -- 20% damage increase and increased size (hope this doesn't break things!)
+local debuff = 17650 -- 20% damage decrease
+
 local function AdjustHealth(creature, expectedPlayerCount, playerCount)
     local map = creature:GetMap()
     local mapId = map:GetMapId()
@@ -8,7 +21,7 @@ local function AdjustHealth(creature, expectedPlayerCount, playerCount)
     else        
         PrintDebug("Got OrigMaxHealth for " .. creature:GetName() .. " from creature data: " ..  origMaxHealth)
     end
-    local newMaxHealth = math.max(math.ceil(origMaxHealth * (playerCount / expectedPlayerCount)), 100)
+    local newMaxHealth = math.ceil(origMaxHealth * (playerCount / expectedPlayerCount))
     if (newMaxHealth ~= creature:GetMaxHealth()) then 
         creature:SetMaxHealth(newMaxHealth) 
         PrintDebug("Adjusted " .. creature:GetName() .. " from " ..  origMaxHealth .. " to " .. newMaxHealth)
@@ -16,19 +29,11 @@ local function AdjustHealth(creature, expectedPlayerCount, playerCount)
 end
 
 local function AdjustDamage(creature, expectedPlayerCount, playerCount)
-    -- Apply a stack of the buff/debuff for each perMissingApplyStack players 
-    -- we are below the expected player count.
-    -- Ex: Instance expects 10 players, but there's 5 players in the instance
-    --     If perMissingApplyStack = 2 -> (10 - 5) / 2 = 2.5, round down to 2
-    local perMissingApplyStack = 2
-
-    local buff = 28419 -- 20% damage increase and increased size (hope this doesn't break things!)
-    local debuff = 17650 -- 20% damage decrease
     local map = creature:GetMap()
     local mapId = map:GetMapId()
-    local stacksToApply = math.floor(math.abs((expectedPlayerCount - playerCount) / perMissingApplyStack))
+    local stacksToApply = math.floor(math.abs(1 - playerCount/expectedPlayerCount) / perMissingApplyStack)
     if stacksToApply <= 0 then
-        PrintDebug("Removing/skipping scaling. stacksToApply: " .. stacksToApply)
+        PrintDebug("Removing/skipping scaling for " .. creature:GetName() .. ". stacksToApply: " .. stacksToApply)
         creature:RemoveAura(buff)
         creature:RemoveAura(debuff)
         return 
@@ -54,12 +59,16 @@ end
 
 -- This almost certainly won't handle everything right
 -- ...but it should cover the vast majority.
-function AdjustCreature(creature, expectedPlayerCount, playerCount)
-    AdjustHealth(creature, expectedPlayerCount, playerCount)
+function AdjustCreature(creature, expectedPlayerCount, playerCount, maximumHealthScaling)
+    local playerCountForHealthScaling = math.max(playerCount, maximumHealthScaling)
+    if playerCount == expectedPlayerCount then return end
     AdjustDamage(creature, expectedPlayerCount, playerCount)
+    if playerCountForHealthScaling == expectedPlayerCount then return end
+    AdjustHealth(creature, expectedPlayerCount, math.max(playerCount, maximumHealthScaling))
 end
 
-function AdjustMap(map, expectedPlayerCount, playerCount)
+function AdjustMap(map, expectedPlayerCount, playerCount, maximumHealthScaling)
+    if playerCount == expectedPlayerCount then return end
     local mapId = map:GetMapId()
     local instanceId = map:GetInstanceId()
     local creatures = map:GetData("Creatures")
@@ -70,7 +79,7 @@ function AdjustMap(map, expectedPlayerCount, playerCount)
     for guid,_ in pairs(creatures) do
         local creature = map:GetWorldObject(guid)
         if creature then
-            AdjustCreature(creature, expectedPlayerCount, playerCount)
+            AdjustCreature(creature, expectedPlayerCount, playerCount, maximumHealthScaling)
         end
     end
 end
